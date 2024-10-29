@@ -1,80 +1,71 @@
-import streamlit as st
+import os
 import schedule
 import time
 from datetime import datetime
-import pytz
+import streamlit as st
 from twilio.rest import Client
-import os
-import threading
+from dotenv import load_dotenv
+import pytz
 
-# Twilio credentials from environment variables
-account_sid = os.getenv('TWILIO_ACCOUNT_SID')
-auth_token = os.getenv('TWILIO_AUTH_TOKEN')
-whatsapp_from = f"whatsapp:{os.getenv('WHATSAPP_FROM')}"
+# Load environment variables from .env file
+load_dotenv()
+
+# Fetch credentials from environment variables
+account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+whatsapp_from = os.getenv("WHATSAPP_FROM")
 
 # Initialize Twilio client
+if not account_sid or not auth_token:
+    st.error("Twilio credentials are not set in the environment variables.")
+    st.stop()
+
 client = Client(account_sid, auth_token)
 
-
-def send_whatsapp_message(message_body, recipients):
-    for recipient in recipients:
-        try:
-            recipient_with_prefix = f"whatsapp:{recipient.strip()}"
-            message = client.messages.create(
-                body=message_body,
-                from_=whatsapp_from,
-                to=recipient_with_prefix
-            )
-            print(f"Reminder sent successfully to {recipient}! Message SID: {message.sid}")
-        except Exception as e:
-            print(f"Failed to send reminder to {recipient}: {e}")
-
-def schedule_reminder(date_str, time_str, message_body, recipients):
+# Function to send WhatsApp message
+def send_whatsapp_message(to, body):
     try:
-        ist = pytz.timezone('Asia/Kolkata')
-        reminder_datetime = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
-        reminder_datetime = ist.localize(reminder_datetime)
-
-        # Calculate time delay
-        delay_seconds = (reminder_datetime - datetime.now(ist)).total_seconds()
-
-        if delay_seconds <= 0:
-            st.warning("The scheduled time is in the past. Please select a future time.")
-            return
-
-        
-        schedule.every(delay_seconds).seconds.do(send_whatsapp_message, message_body=message_body, recipients=recipients)
-        st.success("Reminder set successfully!")
-        print(f"Reminder scheduled for {reminder_datetime} to recipients: {recipients}")
+        message = client.messages.create(
+            from_=whatsapp_from,
+            body=body,
+            to=to
+        )
+        return message.sid
     except Exception as e:
-        print(f"Error scheduling reminder: {e}")
-        st.error("Failed to set reminder. Check date and time format.")
+        st.error(f"Failed to send reminder: {str(e)}")
+        return None
 
+# Function to schedule a reminder
+def schedule_reminder(to, body, reminder_time):
+    def job():
+        send_whatsapp_message(to, body)
 
-def run_scheduler():
+    schedule.every().day.at(reminder_time.strftime("%H:%M")).do(job)
     while True:
         schedule.run_pending()
         time.sleep(1)
 
-st.title("WhatsApp Reminder (IST)")
+# Streamlit UI
+st.title("WhatsApp Reminder App")
 
-st.write("Please set the date and time in Indian Standard Time (IST).")
+# Input fields for user
+to = st.text_input("Enter recipient's WhatsApp number (e.g., +91XXXXXXXXXX):")
+message_body = st.text_area("Enter your reminder message:")
+reminder_date = st.date_input("Select the date for the reminder")
+reminder_time = st.time_input("Select the time for the reminder (IST)")
 
-with st.form("reminder_form"):
-    date_str = st.date_input("Select Date")
-    time_str = st.time_input("Select Time (24-hour format, IST)").strftime("%H:%M")
-    message_body = st.text_area("Message")
-    recipients = st.text_area("Enter recipient numbers (comma-separated, in +91 format)", placeholder="+91XXXXXXXX, +91123XXXXX")
+# Submit button
+if st.button("Set Reminder"):
+    if not to or not message_body:
+        st.error("Please enter a valid WhatsApp number and message.")
+    else:
+        # Combine date and time into a single datetime object
+        reminder_datetime = datetime.combine(reminder_date, reminder_time, tzinfo=pytz.timezone("Asia/Kolkata"))
 
-    if st.form_submit_button("Set Reminder"):
-        if not date_str or not time_str or not message_body or not recipients:
-            st.warning("Please fill in all fields.")
+        if reminder_datetime < datetime.now(pytz.timezone("Asia/Kolkata")):
+            st.error("Reminder time must be in the future.")
         else:
-            recipient_list = [num.strip() for num in recipients.split(',') if num.strip()]
-            schedule_reminder(date_str.strftime("%Y-%m-%d"), time_str, message_body, recipient_list)
-
-
-if 'scheduler_thread' not in st.session_state:
-    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
-    scheduler_thread.start()
-    st.session_state['scheduler_thread'] = scheduler_thread
+            st.success("Reminder has been set!")
+            st.write(f"Reminder will be sent to {to} on {reminder_datetime}.")
+            # Schedule the reminder (run in a separate thread in production code)
+            schedule_reminder(to, message_body, reminder_datetime)
