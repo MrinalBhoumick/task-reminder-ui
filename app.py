@@ -4,34 +4,30 @@ import time
 from datetime import datetime
 import pytz
 from twilio.rest import Client
-from dotenv import load_dotenv
 import os
 import threading
 
-
-load_dotenv()
-
-# Twilio credentials from .env
+# Twilio credentials from environment variables
 account_sid = os.getenv('TWILIO_ACCOUNT_SID')
 auth_token = os.getenv('TWILIO_AUTH_TOKEN')
-whatsapp_from = os.getenv('WHATSAPP_FROM')
+whatsapp_from = f"whatsapp:{os.getenv('WHATSAPP_FROM')}"
 
-
+# Initialize Twilio client
 client = Client(account_sid, auth_token)
 
 
 def send_whatsapp_message(message_body, recipients):
     for recipient in recipients:
         try:
+            recipient_with_prefix = f"whatsapp:{recipient.strip()}"
             message = client.messages.create(
                 body=message_body,
                 from_=whatsapp_from,
-                to=recipient.strip()
+                to=recipient_with_prefix
             )
             print(f"Reminder sent successfully to {recipient}! Message SID: {message.sid}")
         except Exception as e:
             print(f"Failed to send reminder to {recipient}: {e}")
-
 
 def schedule_reminder(date_str, time_str, message_body, recipients):
     try:
@@ -60,7 +56,6 @@ def run_scheduler():
         schedule.run_pending()
         time.sleep(1)
 
-
 st.title("WhatsApp Reminder (IST)")
 
 st.write("Please set the date and time in Indian Standard Time (IST).")
@@ -69,15 +64,15 @@ with st.form("reminder_form"):
     date_str = st.date_input("Select Date")
     time_str = st.time_input("Select Time (24-hour format, IST)").strftime("%H:%M")
     message_body = st.text_area("Message")
-    recipients = st.text_area("Enter recipient numbers (comma-separated, in +91 format)", placeholder="+91123XXXXXXXX, +91987XXXXXXX")
+    recipients = st.text_area("Enter recipient numbers (comma-separated, in +91 format)", placeholder="+91XXXXXXXX, +91123XXXXX")
 
-    
     if st.form_submit_button("Set Reminder"):
         if not date_str or not time_str or not message_body or not recipients:
             st.warning("Please fill in all fields.")
         else:
             recipient_list = [num.strip() for num in recipients.split(',') if num.strip()]
             schedule_reminder(date_str.strftime("%Y-%m-%d"), time_str, message_body, recipient_list)
+
 
 if 'scheduler_thread' not in st.session_state:
     scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
